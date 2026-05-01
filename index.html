@@ -836,7 +836,7 @@ async function estimateCal(){
       method:'POST',
       headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({
-        model:'claude-sonnet-4-20250514',max_tokens:400,
+        model:'claude-haiku-4-5',max_tokens:400,
         system:`You are a precise nutrition expert. User describes food in Thai or English with quantity.
 Respond ONLY valid JSON, no markdown, no explanation:
 {"name":"food name (keep original language)","calories":number,"protein_g":number,"carb_g":number,"sugar_g":number,"fat_g":number,"saturated_fat_g":number,"fiber_g":number,"sodium_mg":number,"note":"one short English tip max 30 chars"}
