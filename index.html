@@ -450,7 +450,7 @@
 <div class="tab-panel" id="tab-exercise">
   <div class="week-summary-grid">
     <div class="mini-stat"><div class="mini-stat-val" style="color:var(--accent3);" id="exCardioMin">0</div><div class="mini-stat-label">Cardio Min</div></div>
-    <div class="mini-stat"><div class="mini-stat-val" style="color:var(--accent2);" id="exSessions">0</div><div class="mini-stat-label">Sessions</div></div>
+    <div class="mini-stat"><div class="mini-stat-val" style="color:var(--accent2);" id="exSessions">0</div><div class="mini-stat-label">Training</div></div>
     <div class="mini-stat"><div class="mini-stat-val" style="color:var(--accent);" id="exActiveDays">0</div><div class="mini-stat-label">Active Days</div></div>
     <div class="mini-stat"><div class="mini-stat-val" style="color:#c56cf0;" id="exStreak">0</div><div class="mini-stat-label">Streak 🔥</div></div>
   </div>
@@ -756,7 +756,7 @@ function updateOverview(){
   document.getElementById('statCardioWeek').textContent=cm;
   document.getElementById('cardioProgress').style.width=Math.min(100,cm/200*100)+'%';
   document.getElementById('cardioGoalVal').textContent=cm+' / 200 min';
-  const s=weekSessions(0);
+  const s=weekTrainingSessions(0);
   document.getElementById('workoutProgress').style.width=Math.min(100,s/4*100)+'%';
   document.getElementById('workoutGoalVal').textContent=s+' / 4 sessions';
   updateMacroGauges();
@@ -1063,19 +1063,40 @@ function renderWeekGrid(){
 function removeEx(key,idx){exercises[key].splice(idx,1);sv(K.e,exercises);renderWeekGrid();updateExSummary();updateOverview();}
 function setCardioMins(key,idx,v){if(exercises[key]?.[idx]!=null){exercises[key][idx].mins=parseInt(v)||0;sv(K.e,exercises);updateExSummary();updateOverview();}}
 const weekCardioMins=off=>{const mon=getWeekStart(off);return Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;}).reduce((t,d)=>t+(exercises[dayKey(d)]||[]).filter(e=>e.type==='cardio').reduce((s,e)=>s+(e.mins||0),0),0);};
+// Training sessions = days with at least 1 non-cardio exercise
+const weekTrainingSessions=off=>{const mon=getWeekStart(off);return Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;}).filter(d=>(exercises[dayKey(d)]||[]).some(e=>e.type!=='cardio')).length;};
+// Keep weekSessions for active days (any exercise)
 const weekSessions=off=>{const mon=getWeekStart(off);return Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;}).filter(d=>(exercises[dayKey(d)]||[]).length>0).length;};
 function calcStreak(){let s=0,d=new Date();while(true){const k=dayKey(d);if((exercises[k]||[]).length>0){s++;d.setDate(d.getDate()-1);}else break;}return s;}
 function updateExSummary(){
-  const cm=weekCardioMins(weekOffset);
+  const isMonth=exView==='month';
+  let cm,ts,active;
+  if(isMonth){
+    const now=new Date();
+    const target=new Date(now.getFullYear(),now.getMonth()+monthOffset,1);
+    const daysInMonth=new Date(target.getFullYear(),target.getMonth()+1,0).getDate();
+    cm=0;ts=0;active=0;
+    for(let d=1;d<=daysInMonth;d++){
+      const key=dayKey(new Date(target.getFullYear(),target.getMonth(),d));
+      const exList=exercises[key]||[];
+      if(exList.length>0) active++;
+      if(exList.some(e=>e.type!=='cardio')) ts++;
+      exList.filter(e=>e.type==='cardio').forEach(e=>{cm+=(e.mins||0);});
+    }
+  } else {
+    cm=weekCardioMins(weekOffset);
+    ts=weekTrainingSessions(weekOffset);
+    active=weekSessions(weekOffset);
+  }
   document.getElementById('exCardioMin').textContent=cm;
-  document.getElementById('exSessions').textContent=weekSessions(weekOffset);
-  document.getElementById('exActiveDays').textContent=weekSessions(weekOffset);
+  document.getElementById('exSessions').textContent=ts;
+  document.getElementById('exActiveDays').textContent=active;
   document.getElementById('exStreak').textContent=calcStreak();
   const pct=Math.min(100,cm/200*100);
   document.getElementById('exCardioProgress').style.width=pct+'%';
-  document.getElementById('exCardioLabel').textContent=cm+' min this week';
+  document.getElementById('exCardioLabel').textContent=cm+(isMonth?' min this month':' min this week');
   document.getElementById('exCardioPercent').textContent=Math.round(pct)+'%';
-  document.getElementById('statCardioWeek').textContent=cm;
+  document.getElementById('statCardioWeek').textContent=weekCardioMins(0);
 }
 function changeWeek(n){weekOffset+=n;renderWeekGrid();updateExSummary();}
 
@@ -1132,8 +1153,8 @@ function renderMonthGrid(){
     const key=dayKey(date);
     const isToday=key===todayStr();
     const exList=exercises[key]||[];
-    const hasWorkout=exList.length>0;
-    if(hasWorkout){ monthSessions++; monthActive++; }
+    if(exList.length>0) monthActive++;
+    if(exList.some(e=>e.type!=='cardio')) monthSessions++;
     exList.filter(e=>e.type==='cardio').forEach(e=>{ monthCardio+=(e.mins||0); });
     const cell=buildMonthCell(key, d, false, isToday);
     grid.appendChild(cell);
