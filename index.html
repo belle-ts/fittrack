@@ -208,6 +208,7 @@
     <button class="tab-btn" onclick="switchTab('exercise',this)">💪 Exercise</button>
   </div>
   <div style="display:flex;align-items:center;gap:10px;">
+    <button onclick="openSettings()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;font-weight:600;transition:all .2s;" onmouseover="this.style.borderColor='var(--accent3)';this.style.color='var(--accent3)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">⚙️ Settings</button>
     <button onclick="openBackup()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;font-family:'DM Sans',sans-serif;font-weight:600;transition:all .2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">💾 Backup</button>
     <div class="header-date" id="headerDate"></div>
   </div>
@@ -548,6 +549,26 @@
 
 </div><!-- /main -->
 
+<!-- SETTINGS MODAL -->
+<div id="settingsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:28px;max-width:460px;width:92%;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;color:var(--accent3);">⚙️ Settings</div>
+      <button onclick="closeSettings()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;">×</button>
+    </div>
+    <div style="background:var(--surface2);border-radius:12px;padding:16px;">
+      <div style="font-family:'DM Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent3);margin-bottom:8px;">🤖 Anthropic API Key</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">ใส่ key จาก <a href="https://console.anthropic.com/settings/keys" target="_blank" style="color:var(--accent3);">console.anthropic.com</a> — เก็บใน device เท่านั้น ไม่ได้ upload ไปที่ไหน</div>
+      <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-..." style="width:100%;background:#0d0d0d;border:1px solid var(--border);color:var(--text);font-family:'DM Mono',monospace;font-size:13px;padding:10px 14px;border-radius:9px;outline:none;margin-bottom:10px;" onfocus="this.style.borderColor='var(--accent3)'" onblur="this.style.borderColor='var(--border)'">
+      <div style="display:flex;gap:8px;">
+        <button onclick="saveApiKey()" class="btn-primary" style="flex:1;background:var(--accent3);color:#000;">💾 Save Key</button>
+        <button onclick="clearApiKey()" class="btn-ghost" style="font-size:12px;">Clear</button>
+      </div>
+      <div id="apiKeyStatus" style="font-size:11px;margin-top:8px;font-family:'DM Mono',monospace;"></div>
+    </div>
+  </div>
+</div>
+
 <!-- BACKUP MODAL -->
 <div id="backupModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:28px;max-width:520px;width:92%;max-height:85vh;overflow-y:auto;">
@@ -596,7 +617,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
 /* ===== CONFIG ===== */
-const API_KEY = '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'; // ← ใส่ key ตรงนี้
+const API_KEY = ''; // key is stored in IndexedDB, set via Settings in the app
 
 /* ===== STORAGE — IndexedDB (persistent on iOS PWA) ===== */
 const DB_NAME='FitTrackDB', DB_VER=1, STORE='kv';
@@ -799,6 +820,13 @@ let pendingAI=null;
 async function estimateCal(){
   const q=document.getElementById('aiFoodQuery').value.trim();
   if(!q){toast('⚠️ Type a food name first');return;}
+  // load key from storage at runtime
+  const apiKey = await dbGet('ft_apikey','');
+  if(!apiKey){
+    document.getElementById('aiResult').className='ai-result show';
+    document.getElementById('aiResult').innerHTML='<div style="color:var(--accent2);font-size:12px;">⚙️ Please set your Anthropic API key first — tap <strong>⚙️ Settings</strong> in the header.</div>';
+    return;
+  }
   const btn=document.getElementById('aiBtnEst'),res=document.getElementById('aiResult');
   btn.disabled=true;
   res.className='ai-result show';
@@ -806,7 +834,7 @@ async function estimateCal(){
   try{
     const r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':API_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',max_tokens:400,
         system:`You are a precise nutrition expert. User describes food in Thai or English with quantity.
@@ -1194,6 +1222,36 @@ function renderCustomPalette(){
   });
 }
 function removeCustomEx(i){customExercises.splice(i,1);sv(K.c,customExercises);renderCustomPalette();}
+
+/* ===== SETTINGS ===== */
+async function openSettings(){
+  document.getElementById('settingsModal').style.display='flex';
+  const key=await dbGet('ft_apikey','');
+  const inp=document.getElementById('apiKeyInput');
+  inp.value=key?'sk-ant-••••••••••••••••••••••'+key.slice(-4):'';
+  const status=document.getElementById('apiKeyStatus');
+  status.textContent=key?'✅ API key is set':'⚠️ No API key — AI Estimator will not work';
+  status.style.color=key?'var(--accent)':'var(--accent2)';
+}
+function closeSettings(){document.getElementById('settingsModal').style.display='none';}
+document.getElementById('settingsModal').addEventListener('click',function(e){if(e.target===this)closeSettings();});
+async function saveApiKey(){
+  const val=document.getElementById('apiKeyInput').value.trim();
+  if(!val||val.includes('••')){toast('⚠️ Paste your full API key');return;}
+  await dbSet('ft_apikey',val);
+  const status=document.getElementById('apiKeyStatus');
+  status.textContent='✅ Key saved! AI Estimator is ready.';
+  status.style.color='var(--accent)';
+  toast('✅ API key saved!');
+  setTimeout(closeSettings,1200);
+}
+async function clearApiKey(){
+  await dbSet('ft_apikey','');
+  document.getElementById('apiKeyInput').value='';
+  const status=document.getElementById('apiKeyStatus');
+  status.textContent='⚠️ Key cleared';
+  status.style.color='var(--accent2)';
+}
 
 /* ===== BACKUP & RESTORE ===== */
 function buildSnapshot(){
