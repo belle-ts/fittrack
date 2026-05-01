@@ -2,7 +2,12 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FitTrack">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0d0d0d">
 <title>FitTrack — Your Body, Your Story</title>
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -210,6 +215,18 @@
 
 <div class="main">
 
+<!-- BACKUP REMINDER BANNER -->
+<div id="backupReminder" style="display:none;background:linear-gradient(135deg,#2a1500,#1f1000);border:1px solid var(--accent2);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:none;align-items:center;gap:12px;flex-wrap:wrap;">
+  <span style="font-size:18px;">⚠️</span>
+  <div style="flex:1;font-size:12px;line-height:1.5;">
+    <strong style="color:var(--accent2);">Backup your data!</strong>
+    <span style="color:var(--muted);"> — iOS may clear app storage. Last backup: </span>
+    <span id="lastBackupDate" style="color:var(--accent2);font-family:'DM Mono',monospace;font-size:11px;">never</span>
+  </div>
+  <button onclick="exportData();dismissReminder()" class="btn-primary btn-sm" style="background:var(--accent2);">⬇ Backup Now</button>
+  <button onclick="dismissReminder()" style="background:none;border:none;color:var(--muted);font-size:18px;cursor:pointer;line-height:1;padding:0 4px;">×</button>
+</div>
+
 <!-- OVERVIEW -->
 <div class="tab-panel active" id="tab-overview">
   <div class="quote-banner">
@@ -314,7 +331,7 @@
     <div class="card">
       <div class="card-title"><span class="dot"></span> Weight Journey</div>
       <div style="display:flex;gap:9px;margin-bottom:12px;align-items:center;">
-        <input class="inp inp-mono" type="number" id="weightInput" placeholder="65.0" step="0.1" min="30" max="300" style="width:110px;font-size:19px;">
+        <input class="inp inp-mono" type="number" id="weightInput" placeholder="52.0" step="0.1" min="30" max="300" style="width:110px;font-size:19px;">
         <input class="inp" type="date" id="weightDate" style="flex:1;">
         <button class="btn-primary" onclick="logWeight()">+ Log</button>
       </div>
@@ -333,7 +350,7 @@
     <div class="card">
       <div class="card-title"><span class="dot"></span> Daily Steps</div>
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
-        <input class="inp inp-mono" type="number" id="stepsInput" placeholder="8,500" min="0" max="99999" style="flex:1;font-size:20px;">
+        <input class="inp inp-mono" type="number" id="stepsInput" placeholder="10,000" min="0" max="99999" style="flex:1;font-size:20px;">
         <input class="inp" type="date" id="stepsDate" style="width:140px;">
         <button class="btn-primary btn-sm" onclick="logSteps()">+ Log</button>
       </div>
@@ -578,13 +595,62 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-/* ===== STORAGE ===== */
-const K={w:'ft_weights',f:'ft_foods',e:'ft_exercises',t:'ft_target',c:'ft_custom'};
-const sv=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}};
-const ld=(k,d)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}};
+/* ===== CONFIG ===== */
+const API_KEY = 'YOUR_API_KEY_HERE'; // ← ใส่ key ตรงนี้
 
-let weights=ld(K.w,[]),foods=ld(K.f,{}),exercises=ld(K.e,{});
-let targetWeight=ld(K.t,null),customExercises=ld(K.c,[]);
+/* ===== STORAGE — IndexedDB (persistent on iOS PWA) ===== */
+const DB_NAME='FitTrackDB', DB_VER=1, STORE='kv';
+let db=null;
+
+function openDB(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(DB_NAME,DB_VER);
+    req.onupgradeneeded=e=>{
+      e.target.result.createObjectStore(STORE);
+    };
+    req.onsuccess=e=>{db=e.target.result;res(db);};
+    req.onerror=e=>rej(e);
+  });
+}
+
+function dbSet(key,val){
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(STORE,'readwrite');
+    tx.objectStore(STORE).put(val,key);
+    tx.oncomplete=()=>res();
+    tx.onerror=e=>rej(e);
+    // mirror to localStorage as fallback
+    try{localStorage.setItem(key,JSON.stringify(val));}catch(e){}
+  });
+}
+
+function dbGet(key,def=null){
+  return new Promise((res)=>{
+    const tx=db.transaction(STORE,'readonly');
+    const req=tx.objectStore(STORE).get(key);
+    req.onsuccess=()=>{
+      const v=req.result;
+      if(v!=null){res(v);return;}
+      // fallback: try localStorage migration
+      try{
+        const ls=localStorage.getItem(key);
+        if(ls!=null){const parsed=JSON.parse(ls);dbSet(key,parsed);res(parsed);return;}
+      }catch(e){}
+      res(def);
+    };
+    req.onerror=()=>res(def);
+  });
+}
+
+// sync wrappers used throughout (after db ready)
+const K={w:'ft_weights',f:'ft_foods',e:'ft_exercises',t:'ft_target',c:'ft_custom',s:'ft_steps',bl:'ft_lastbackup'};
+function sv(key,val){
+  dbSet(key,val).catch(()=>{
+    try{localStorage.setItem(key,JSON.stringify(val));}catch(e){}
+  });
+}
+
+let weights=[],foods={},exercises={},targetWeight=null,customExercises=[],steps=[];
 
 /* ===== DATE ===== */
 const todayStr=()=>new Date().toISOString().split('T')[0];
@@ -740,7 +806,7 @@ async function estimateCal(){
   try{
     const r=await fetch('https://api.anthropic.com/v1/messages',{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json','x-api-key':API_KEY,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
       body:JSON.stringify({
         model:'claude-sonnet-4-20250514',max_tokens:400,
         system:`You are a precise nutrition expert. User describes food in Thai or English with quantity.
@@ -1180,10 +1246,13 @@ function exportData(){
   const blob=new Blob([JSON.stringify(snap,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=fname;a.click();
   URL.revokeObjectURL(a.href);
+  // record backup time
+  localStorage.setItem('ft_lastbackup', Date.now().toString());
+  document.getElementById('backupReminder').style.display='none';
   const info=document.getElementById('exportInfo');
   info.style.display='block';
   info.textContent=`✅ Saved: ${fname}  (${(blob.size/1024).toFixed(1)} KB)`;
-  toast('💾 Backup downloaded!');
+  toast('💾 Backup downloaded! Save to iCloud Files.');
 }
 
 function copyDataToClipboard(){
@@ -1235,7 +1304,11 @@ function applySnapshot(snap){
     sv('ft_steps',steps);
   }
   if(snap.targetWeight!=null){targetWeight=snap.targetWeight;sv(K.t,targetWeight);}
-  renderWeightChart();updateOverview();renderFoodLog();renderFoodChart();renderCustomPalette();renderWeekGrid();updateExSummary();
+  // persist everything back to IndexedDB
+  sv(K.w,weights);sv(K.f,foods);sv(K.e,exercises);sv(K.c,customExercises);sv(K.s,steps);
+  renderWeightChart();updateOverview();renderFoodLog();renderFoodChart();renderCustomPalette();renderWeekGrid();updateExSummary();renderSteps();
+  localStorage.setItem('ft_lastbackup', Date.now().toString());
+  document.getElementById('backupReminder').style.display='none';
 }
 
 function importData(input){
@@ -1280,9 +1353,7 @@ function importFromPaste(){
 }
 
 /* ===== STEPS ===== */
-// steps stored in K.s = 'ft_steps' — array of {date, steps}
-let steps=ld('ft_steps',[]);
-const STEPS_GOAL=8000;
+const STEPS_GOAL=10000;
 
 function logSteps(){
   const val=parseInt(document.getElementById('stepsInput').value);
@@ -1327,8 +1398,45 @@ function renderSteps(){
   }).join('');
 }
 
+/* ===== BACKUP REMINDER ===== */
+function dismissReminder(){
+  document.getElementById('backupReminder').style.display='none';
+}
+function checkBackupReminder(){
+  const last=localStorage.getItem('ft_lastbackup');
+  const el=document.getElementById('backupReminder');
+  if(!last){
+    // never backed up and has data
+    if(weights.length>0||Object.keys(foods).length>0){
+      document.getElementById('lastBackupDate').textContent='never';
+      el.style.display='flex';
+    }
+    return;
+  }
+  const daysSince=Math.floor((Date.now()-parseInt(last))/(1000*60*60*24));
+  if(daysSince>=7){
+    const d=new Date(parseInt(last));
+    document.getElementById('lastBackupDate').textContent=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+    el.style.display='flex';
+  }
+}
+
 /* ===== INIT ===== */
-function init(){
+async function init(){
+  // open IndexedDB first
+  try{ await openDB(); } catch(e){ console.warn('IndexedDB unavailable, using localStorage fallback'); }
+
+  // load all data
+  weights        = await dbGet(K.w,[]);
+  foods          = await dbGet(K.f,{});
+  exercises      = await dbGet(K.e,{});
+  targetWeight   = await dbGet(K.t,null);
+  customExercises= await dbGet(K.c,[]);
+  steps          = await dbGet(K.s,[]);
+
+  // restore target weight display
+  if(targetWeight) document.getElementById('targetWeightDisplay').textContent='🎯 '+targetWeight+' kg';
+
   const now=new Date();
   document.getElementById('headerDate').textContent=now.toLocaleDateString('en-US',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   document.getElementById('weightDate').value=todayStr();
@@ -1338,7 +1446,10 @@ function init(){
   renderFoodLog();renderFoodChart();
   renderCustomPalette();renderWeekGrid();
   renderSteps();
+  checkBackupReminder();
   setInterval(loadQuote,600000);
+  // check backup reminder daily
+  setInterval(checkBackupReminder, 1000*60*60);
 }
 init();
 </script>
